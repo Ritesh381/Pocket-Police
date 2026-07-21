@@ -1,0 +1,26 @@
+name: Monthly Pocket Police Reminders
+
+on:
+  schedule:
+    - cron: '0 9 1 * *'   # 09:00 UTC on the 1st of every month
+  workflow_dispatch:        # allow manual runs for testing
+    inputs:
+      dryRun:
+        description: 'Preview without sending (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invoke send-monthly-reminders endpoint
+        run: |
+          DRY="${{ github.event.inputs.dryRun }}"
+          QS=""
+          if [ "$DRY" = "true" ]; then QS="?dryRun=1"; fi
+          curl --fail --silent --show-error \
+            -X POST "${{ secrets.BACKEND_URL }}/api/cron/send-monthly-reminders${QS}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{}'

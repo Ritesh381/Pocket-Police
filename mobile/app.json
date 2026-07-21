@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Pocket Police",
+    "slug": "vasuli-bhai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "vasulibhai",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.vasulibhai.app"
+    },
+    "android": {
+      "package": "com.vasulibhai.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B7A4B",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "35741db3-f5a3-4238-ac3a-3d946dcd159d"
+      }
+    }
+  }
+}
