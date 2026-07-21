@@ -15,12 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Invoke send-monthly-reminders endpoint
+        # Secrets are passed as env vars (NOT inlined into the script) so the shell
+        # never re-expands special characters like $ & ^ inside the secret value.
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DRY: ${{ github.event.inputs.dryRun }}
         run: |
-          DRY="${{ github.event.inputs.dryRun }}"
           QS=""
           if [ "$DRY" = "true" ]; then QS="?dryRun=1"; fi
           curl --fail --silent --show-error \
-            -X POST "${{ secrets.BACKEND_URL }}/api/cron/send-monthly-reminders${QS}" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -X POST "${BACKEND_URL}/api/cron/send-monthly-reminders${QS}" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "Content-Type: application/json" \
             -d '{}'
