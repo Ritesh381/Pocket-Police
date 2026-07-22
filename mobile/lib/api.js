@@ -62,6 +62,8 @@ export const api = {
   updatePerson: (id, body) => request('PATCH', `/api/people/${id}`, body),
   deletePerson: (id) => request('DELETE', `/api/people/${id}`),
 
+  remindPerson: (personId) => request('POST', `/api/people/${personId}/remind`),
+
   listExpenses: (personId) => request('GET', `/api/people/${personId}/expenses`),
   addExpense: (personId, body) => request('POST', `/api/people/${personId}/expenses`, body),
   updateExpense: (id, body) => request('PATCH', `/api/expenses/${id}`, body),
@@ -71,4 +73,8 @@ export const api = {
   updateSettings: (body) => request('PATCH', '/api/settings', body),
 
   getReminderLogs: () => request('GET', '/api/reminders/logs'),
+
+  getTelegramStatus: () => request('GET', '/api/telegram/status'),
+  telegramLinkToken: () => request('POST', '/api/telegram/link-token'),
+  telegramUnlink: () => request('POST', '/api/telegram/unlink'),
 };

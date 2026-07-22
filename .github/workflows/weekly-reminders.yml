@@ -1,0 +1,30 @@
+name: Weekly Pocket Police Reminders
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # 09:00 UTC every Monday
+  workflow_dispatch:        # allow manual runs for testing
+    inputs:
+      dryRun:
+        description: 'Preview without sending (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invoke send-weekly-reminders endpoint
+        # Secrets via env (NOT inlined) so the shell never re-expands $ inside them.
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DRY: ${{ github.event.inputs.dryRun }}
+        run: |
+          QS=""
+          if [ "$DRY" = "true" ]; then QS="?dryRun=1"; fi
+          curl --fail --silent --show-error \
+            -X POST "${BACKEND_URL}/api/cron/send-weekly-reminders${QS}" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '{}'

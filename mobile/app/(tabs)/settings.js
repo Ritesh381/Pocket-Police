@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Switch, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Switch, ScrollView, Alert, ActivityIndicator, TouchableOpacity, Linking } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { MaterialIcons } from '@expo/vector-icons';
 import { api } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { Button, Card, Field } from '../../components/ui';
@@ -23,6 +24,8 @@ export default function Settings() {
   const [emailMessage, setEmailMessage] = useState('');
   const [emailClosing, setEmailClosing] = useState('');
   const [savingEmail, setSavingEmail] = useState(false);
+  const [tg, setTg] = useState(null);
+  const [tgBusy, setTgBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -42,7 +45,34 @@ export default function Settings() {
     } finally {
       setLoading(false);
     }
+    // Telegram status is best-effort (older backends may not have the endpoint).
+    try { setTg(await api.getTelegramStatus()); } catch { setTg(null); }
   }, []);
+
+  const connectTelegram = async () => {
+    setTgBusy(true);
+    try {
+      const { url } = await api.telegramLinkToken();
+      await Linking.openURL(url);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setTgBusy(false);
+    }
+  };
+
+  const unlinkTelegram = () => {
+    Alert.alert('Unlink Telegram?', 'The bot will stop working until you reconnect.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Unlink',
+        style: 'destructive',
+        onPress: async () => {
+          try { await api.telegramUnlink(); load(); } catch (e) { Alert.alert('Error', e.message); }
+        },
+      },
+    ]);
+  };
 
   const saveEmail = async () => {
     setSavingEmail(true);
@@ -73,6 +103,17 @@ export default function Settings() {
       Alert.alert('Error', e.message);
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const setFrequency = async (f) => {
+    const prev = settings;
+    setSettings({ ...settings, reminder_frequency: f }); // optimistic
+    try {
+      await api.updateSettings({ reminder_frequency: f });
+    } catch (e) {
+      setSettings(prev);
+      Alert.alert('Error', e.message);
     }
   };
 
@@ -114,8 +155,22 @@ export default function Settings() {
       </Card>
       <Text style={s.hint}>Reminders say "…{name || 'you'} bhai ka karz…" and add a UPI pay button when a UPI ID is set.</Text>
 
-      <Text style={[s.section, { marginTop: 24 }]}>Monthly reminders</Text>
+      <Text style={[s.section, { marginTop: 24 }]}>Reminders</Text>
       <Card>
+        <View style={s.freqRow}>
+          <Text style={s.rowLabel}>Frequency</Text>
+          <View style={s.segment}>
+            {['monthly', 'weekly'].map((f) => {
+              const active = (settings.reminder_frequency || 'monthly') === f;
+              return (
+                <TouchableOpacity key={f} style={[s.segBtn, active && s.segActive]} onPress={() => setFrequency(f)}>
+                  <Text style={[s.segText, active && s.segTextActive]}>{f === 'monthly' ? 'Monthly' : 'Weekly'}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+        <Divider />
         <Row label="Send reminders" value={settings.reminders_on} onToggle={() => toggle('reminders_on')} />
         <Divider />
         <Row label="Email" value={settings.channel_email} disabled={!settings.reminders_on} onToggle={() => toggle('channel_email')} />
@@ -125,8 +180,11 @@ export default function Settings() {
         <Row label="WhatsApp" value={settings.channel_whatsapp} disabled={!settings.reminders_on} onToggle={() => toggle('channel_whatsapp')} />
       </Card>
       <Text style={s.hint}>
-        On the 1st of each month, everyone with a positive balance gets a reminder on the enabled channels
-        (only if they have that contact detail saved).
+        {(settings.reminder_frequency || 'monthly') === 'weekly'
+          ? 'Every Monday, '
+          : 'On the 1st of each month, '}
+        everyone with a positive balance gets a reminder on the enabled channels (only if they have that
+        contact detail saved). You can also tap “Remind now” on a person to send instantly.
       </Text>
 
       <Button title="View reminder history" variant="ghost" style={{ marginTop: 12 }} onPress={() => router.push('/reminders')} />
@@ -173,6 +231,34 @@ export default function Settings() {
         <Text style={s.previewText}>{preview(emailClosing, emailDefaults.closing, name)}</Text>
       </View>
 
+      <Text style={[s.section, { marginTop: 24 }]}>Telegram bot</Text>
+      <Card>
+        {!tg || !tg.configured ? (
+          <Text style={s.meta}>The Telegram bot isn't set up on the server yet.</Text>
+        ) : tg.linked ? (
+          <>
+            <View style={s.tgRow}>
+              <MaterialIcons name="check-circle" size={22} color={colors.owed} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.tgTitle}>Connected</Text>
+                <Text style={s.meta}>
+                  {tg.telegram.username ? '@' + tg.telegram.username : 'Telegram ID ' + tg.telegram.id}
+                </Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+              <Button title="Change account" variant="ghost" style={{ flex: 1 }} loading={tgBusy} onPress={connectTelegram} />
+              <Button title="Unlink" variant="ghost" style={{ flex: 1, borderColor: colors.danger }} onPress={unlinkTelegram} />
+            </View>
+          </>
+        ) : (
+          <>
+            <Text style={s.meta}>Log expenses by chatting with the bot in plain language. Connect once — it stays linked.</Text>
+            <Button title="Connect Telegram" style={{ marginTop: 12 }} loading={tgBusy} onPress={connectTelegram} />
+          </>
+        )}
+      </Card>
+
       <Button title="Sign out" variant="ghost" style={{ marginTop: 24 }} onPress={signOut} />
     </ScrollView>
   );
@@ -215,7 +301,15 @@ const makeStyles = (colors) => StyleSheet.create({
   meta: { fontSize: 13, color: colors.muted, marginTop: 4 },
   section: { fontSize: 13, fontWeight: '700', color: colors.muted, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 },
+  freqRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
   rowLabel: { fontSize: 16, color: colors.text },
+  segment: { flexDirection: 'row', backgroundColor: colors.bg, borderRadius: 999, padding: 3, borderWidth: 1, borderColor: colors.border },
+  segBtn: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 999 },
+  segActive: { backgroundColor: colors.primary },
+  segText: { fontSize: 14, fontWeight: '700', color: colors.muted },
+  segTextActive: { color: '#fff' },
+  tgRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 },
+  tgTitle: { fontSize: 16, fontWeight: '700', color: colors.text },
   divider: { height: 1, backgroundColor: colors.border },
   hint: { fontSize: 13, color: colors.muted, marginTop: 12, lineHeight: 18 },
   previewLabel: { fontSize: 13, fontWeight: '700', color: colors.muted, marginTop: 20, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },

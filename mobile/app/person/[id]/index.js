@@ -27,6 +27,7 @@ export default function PersonDetail() {
   const [balance, setBalance] = useState(0);
   const [currency, setCurrency] = useState('INR');
   const [loading, setLoading] = useState(true);
+  const [reminding, setReminding] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -94,6 +95,23 @@ export default function PersonDetail() {
     }
   };
 
+  const remindNow = async () => {
+    setReminding(true);
+    try {
+      const { summary } = await api.remindPerson(id);
+      const parts = Object.entries(summary.channels || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+      Alert.alert(
+        summary.sent > 0 ? `Reminder sent (${summary.sent})` : 'Reminder failed',
+        parts || 'No channel was available.',
+      );
+      load();
+    } catch (e) {
+      Alert.alert('Could not remind', e.message);
+    } finally {
+      setReminding(false);
+    }
+  };
+
   const recordPayment = () => {
     router.push({
       pathname: `/person/${id}/add-expense`,
@@ -145,6 +163,19 @@ export default function PersonDetail() {
                 {formatMoney(Math.abs(balance), currency)}
               </Text>
             </View>
+
+            {balance > 0 && (
+              <TouchableOpacity style={s.remindBtn} onPress={remindNow} disabled={reminding} activeOpacity={0.85}>
+                {reminding ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <MaterialIcons name="notifications-active" size={19} color="#fff" />
+                    <Text style={s.remindBtnText}>Remind now</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
 
             {contactActions.length > 0 && (
               <View style={s.actions}>
@@ -226,6 +257,11 @@ const makeStyles = (colors) => StyleSheet.create({
   balanceCard: { backgroundColor: colors.primary, borderRadius: radius.lg, padding: 24, alignItems: 'center' },
   balanceLabel: { color: colors.subOnPrimary, fontSize: 14, fontWeight: '600' },
   balanceAmount: { fontSize: 40, fontWeight: '800', marginTop: 4 },
+  remindBtn: {
+    flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center',
+    marginTop: 12, height: 50, borderRadius: radius.md, backgroundColor: colors.primaryDark,
+  },
+  remindBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   actions: { flexDirection: 'row', gap: 10, marginTop: 16 },
   action: { flex: 1, flexDirection: 'row', gap: 6, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
   actionText: { fontSize: 14, fontWeight: '600', color: colors.text },

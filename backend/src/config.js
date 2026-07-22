@@ -43,9 +43,18 @@ export const config = {
     whatsappFrom: process.env.TWILIO_WHATSAPP_FROM || '', // e.g. whatsapp:+14155550123
   },
 
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    botUsername: (process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, ''),
+    webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || '',
+  },
+
   // CORS: comma-separated list of allowed origins, or "*" for any (dev only).
   corsOrigins: process.env.CORS_ORIGINS || '*',
 };
+
+export const isTelegramConfigured = () =>
+  Boolean(config.telegram.botToken && config.telegram.botUsername);
 
 export const isEmailConfigured = () =>
   Boolean(config.email.smtpHost && config.email.smtpUser && config.email.smtpPass);

@@ -2,8 +2,15 @@ import { Router } from 'express';
 import { supabase } from '../supabase.js';
 import { asyncHandler, supabaseError, parseBody } from '../lib/helpers.js';
 import { personCreateSchema, personUpdateSchema, expenseCreateSchema } from '../lib/schemas.js';
+import { remindPerson } from '../services/reminders.js';
 
 const router = Router();
+
+// POST /api/people/:id/remind — send a reminder to this person right now.
+router.post('/:id/remind', asyncHandler(async (req, res) => {
+  const summary = await remindPerson(req.params.id, req.user.id);
+  res.json({ ok: true, summary });
+}));
 
 // GET /api/people — list all people for the user, each with a computed balance.
 router.get('/', asyncHandler(async (req, res) => {

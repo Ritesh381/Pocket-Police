@@ -12,6 +12,7 @@ import dashboardRouter from './routes/dashboard.js';
 import profileRouter from './routes/profile.js';
 import settingsRouter from './routes/settings.js';
 import remindersRouter from './routes/reminders.js';
+import telegramRouter from './routes/telegram.js';
 
 // Builds the Express app. Exported so it can run both as a long-lived server
 // (local dev, src/index.js) and as a serverless handler (Vercel, api/index.js).
@@ -28,8 +29,9 @@ app.use(morgan('dev'));
 // Health check (public).
 app.get('/health', (req, res) => res.json({ ok: true, service: 'pocket-police-backend' }));
 
-// Reminders router owns its own auth (cron secret vs user JWT), mount first.
+// Reminders + Telegram routers own their own auth (cron/webhook secret vs user JWT).
 app.use('/api', remindersRouter);
+app.use('/api/telegram', telegramRouter);
 
 // All routes below require a valid Supabase user JWT.
 app.use('/api/me', requireAuth, profileRouter);

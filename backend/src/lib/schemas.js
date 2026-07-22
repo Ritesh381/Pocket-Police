@@ -30,6 +30,7 @@ export const expenseUpdateSchema = expenseCreateSchema.partial().refine(
 
 export const settingsUpdateSchema = z.object({
   reminders_on: z.boolean().optional(),
+  reminder_frequency: z.enum(['monthly', 'weekly']).optional(),
   channel_email: z.boolean().optional(),
   channel_sms: z.boolean().optional(),
   channel_whatsapp: z.boolean().optional(),
