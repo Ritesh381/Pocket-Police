@@ -15,12 +15,22 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://pocket-police.vercel.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ertfrvtqippwmvczynym.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_TwOxWJsojuuvHcBlB8CJoA_h-LrFHTf"
       }
     },
     "production": {
       "autoIncrement": true,
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://pocket-police.vercel.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ertfrvtqippwmvczynym.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_TwOxWJsojuuvHcBlB8CJoA_h-LrFHTf"
       }
     }
   },
