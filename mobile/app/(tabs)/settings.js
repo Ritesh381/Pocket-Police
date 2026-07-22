@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { api } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { Button, Card, Field } from '../../components/ui';
+import CurrencyField from '../../components/CurrencyField';
 import { useTheme } from '../../lib/theme';
 
 export default function Settings() {
@@ -15,6 +16,7 @@ export default function Settings() {
   const [profile, setProfile] = useState(null);
   const [name, setName] = useState('');
   const [upi, setUpi] = useState('');
+  const [currency, setCurrency] = useState('INR');
   const [savingProfile, setSavingProfile] = useState(false);
   const [emailDefaults, setEmailDefaults] = useState({});
   const [emailSubject, setEmailSubject] = useState('');
@@ -30,6 +32,7 @@ export default function Settings() {
       setProfile(profile);
       setName(profile?.full_name || '');
       setUpi(profile?.upi_id || '');
+      setCurrency(profile?.currency || 'INR');
       setEmailDefaults(email_defaults || {});
       setEmailSubject(settings.email_subject || '');
       setEmailMessage(settings.email_message || '');
@@ -63,7 +66,7 @@ export default function Settings() {
   const saveProfile = async () => {
     setSavingProfile(true);
     try {
-      const { profile } = await api.updateMe({ full_name: name.trim(), upi_id: upi.trim() });
+      const { profile } = await api.updateMe({ full_name: name.trim(), upi_id: upi.trim(), currency });
       setProfile(profile);
       Alert.alert('Saved', 'Your details are updated.');
     } catch (e) {
@@ -106,6 +109,7 @@ export default function Settings() {
           autoCapitalize="none"
           keyboardType="email-address"
         />
+        <CurrencyField label="Currency" value={currency} onChange={setCurrency} />
         <Button title="Save details" onPress={saveProfile} loading={savingProfile} />
       </Card>
       <Text style={s.hint}>Reminders say "…{name || 'you'} bhai ka karz…" and add a UPI pay button when a UPI ID is set.</Text>
