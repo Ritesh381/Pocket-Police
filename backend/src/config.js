@@ -49,12 +49,23 @@ export const config = {
     webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || '',
   },
 
+  // LLM used by the Telegram bot to turn plain-language messages into ledger
+  // entries. Groq's OpenAI-compatible API — fast + generous free tier.
+  llm: {
+    provider: 'groq',
+    groqApiKey: process.env.GROQ_API_KEY || '',
+    // Any Groq-hosted model; default is a strong, cheap instruction follower.
+    groqModel: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+  },
+
   // CORS: comma-separated list of allowed origins, or "*" for any (dev only).
   corsOrigins: process.env.CORS_ORIGINS || '*',
 };
 
 export const isTelegramConfigured = () =>
   Boolean(config.telegram.botToken && config.telegram.botUsername);
+
+export const isLlmConfigured = () => Boolean(config.llm.groqApiKey);
 
 export const isEmailConfigured = () =>
   Boolean(config.email.smtpHost && config.email.smtpUser && config.email.smtpPass);

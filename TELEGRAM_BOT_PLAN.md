@@ -150,7 +150,7 @@ The confirm step is the safety net: nothing writes until the user taps ✅.
 | **Groq** (Llama 3.x / other OSS) | **Free tier**, very fast | Good, OpenAI-compatible API. |
 | **Claude Haiku** (`claude-haiku-4-5`) | Paid, but very cheap (~fractions of a ¢/msg) | Best extraction quality & instruction-following; use if free tiers get flaky at scale. |
 
-**Recommendation:** start on **Gemini Flash free tier** (zero cost, ample for personal/friends use). Keep the LLM call behind a small `extract()` adapter so swapping to Claude Haiku later is a one-file change. Extraction is a tiny, structured task — Flash handles it well.
+**Chosen: Groq** (`llama-3.3-70b-versatile`, free tier, OpenAI-compatible JSON mode). Zero cost and very fast, ample for personal/friends use. The LLM call lives behind a small `extractEntries()` adapter (`backend/src/services/llm.js`), so swapping model or provider later is a one-file change. Extraction is a tiny, structured task — a 70B Llama handles it well.
 
 ---
 
@@ -162,7 +162,7 @@ The confirm step is the safety net: nothing writes until the user taps ✅.
 - **Confirmation before write** for anything the LLM produced.
 - **Rate limit** LLM calls per telegram_id (e.g. 20/min) to cap abuse/cost.
 - **Idempotency:** ignore Telegram retries by tracking `update_id`.
-- **Secrets:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `GEMINI_API_KEY` in Vercel env (never in the app).
+- **Secrets:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `GROQ_API_KEY` in Vercel env (never in the app).
 
 ---
 
@@ -174,13 +174,14 @@ Everything reuses infrastructure you already pay $0 for.
 - Telegram → **@BotFather** → `/newbot` → name it → get the **bot token**.
 
 **Step 2 — Get a free LLM key:**
-- **Gemini:** [aistudio.google.com](https://aistudio.google.com) → "Get API key" (free tier). *(or Groq: console.groq.com)*
+- **Groq:** [console.groq.com](https://console.groq.com) → API Keys → create key (free tier).
 
 **Step 3 — Add env vars to Vercel** (Project → Settings → Environment Variables):
 ```
 TELEGRAM_BOT_TOKEN=123456:ABC...
 TELEGRAM_WEBHOOK_SECRET=<random string>
-GEMINI_API_KEY=<key>
+GROQ_API_KEY=<key>
+GROQ_MODEL=llama-3.3-70b-versatile   # optional
 ```
 
 **Step 4 — Ship the webhook endpoint** (part of the existing backend): `POST /api/telegram/webhook`. Push → Vercel auto-deploys. No new service, no new bill.
@@ -205,7 +206,7 @@ That's it — the bot is live and free:
 | Phase | Scope |
 |---|---|
 | **M1 — Plumbing** | `telegram_links` + token tables, `/api/telegram/webhook` (verify secret, echo), `/start <token>` linking, app "Connect Telegram" button. |
-| **M2 — Extraction** | `extract()` LLM adapter (Gemini), Zod validation, person resolution, confirm inline keyboard, write on ✅. |
+| **M2 — Extraction** ✅ | `extractEntries()` LLM adapter (**Groq**), Zod validation, person resolution, confirm inline keyboard, write on ✅. Auto-creates unknown people on confirm. |
 | **M3 — Commands** | `/balance`, `/who`, `/remind <name>` (reuse remind endpoint), `/unlink`, `/help`. |
 | **M4 — Polish** | rate limiting, `update_id` dedupe, ambiguity prompts, multi-person summaries, nice formatting. |
 

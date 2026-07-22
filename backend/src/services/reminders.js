@@ -3,7 +3,7 @@ import { isEmailConfigured, isTwilioConfigured } from '../config.js';
 import { sendReminderEmail } from './email.js';
 import { sendReminderSms, sendReminderWhatsApp } from './twilio.js';
 
-function formatAmount(amount, currency = 'INR') {
+export function formatAmount(amount, currency = 'INR') {
   try {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
   } catch {

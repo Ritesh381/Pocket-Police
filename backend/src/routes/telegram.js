@@ -3,8 +3,16 @@ import { randomBytes } from 'crypto';
 import { supabase } from '../supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { asyncHandler, supabaseError } from '../lib/helpers.js';
-import { config, isTelegramConfigured } from '../config.js';
-import { sendMessage } from '../services/telegram.js';
+import { config, isTelegramConfigured, isLlmConfigured } from '../config.js';
+import { sendMessage, editMessageText, answerCallbackQuery } from '../services/telegram.js';
+import { extractEntries } from '../services/llm.js';
+import {
+  getUserContext,
+  resolveEntries,
+  writeEntries,
+  getBalances,
+  formatAmount,
+} from '../services/telegramLedger.js';
 
 const router = Router();
 
@@ -69,6 +77,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 }));
 
 async function handleUpdate(update) {
+  if (update.callback_query) return handleCallback(update.callback_query);
+
   const msg = update.message;
   if (!msg || !msg.text) return;
   const chatId = msg.chat.id;
@@ -99,7 +109,7 @@ async function handleUpdate(update) {
     await supabase.from('telegram_link_tokens').delete().eq('token', token);
 
     const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', tok.user_id).maybeSingle();
-    await sendMessage(chatId, `✅ Connected to your Pocket Police account${prof?.full_name ? `, <b>${escape(prof.full_name)}</b>` : ''}!\n\nSoon you'll be able to log who owes you — just by typing here in plain language.`);
+    await sendMessage(chatId, `✅ Connected to your Pocket Police account${prof?.full_name ? `, <b>${escape(prof.full_name)}</b>` : ''}!\n\nNow just type who owes what — e.g. <i>“gave Jenil 300 for dinner”</i>. I'll confirm before saving. Send /help for examples.`);
     return;
   }
 
@@ -118,10 +128,138 @@ async function handleUpdate(update) {
     return;
   }
   if (text === '/help') {
-    await sendMessage(chatId, "<b>Pocket Police bot</b>\n\nNatural-language expense logging is coming soon. For now you're connected ✅\n\n/unlink — disconnect this Telegram");
+    await sendMessage(chatId, HELP_TEXT);
     return;
   }
-  await sendMessage(chatId, "✅ You're connected. Natural-language logging (e.g. “Jenil owes 250 for dinner”) is coming soon!");
+
+  // Everything else = a natural-language expense message.
+  await handleExpenseMessage(chatId, tgId, link.user_id, text);
+}
+
+const HELP_TEXT =
+  '<b>Pocket Police bot</b>\n\n' +
+  'Just tell me who owes what, in plain language:\n' +
+  '• <i>“gave Jenil 300 for pizza”</i>\n' +
+  '• <i>“Shubham owes 250 for dinner, paid back 100”</i>\n' +
+  '• <i>“lent Aman 500 for the concert”</i>\n\n' +
+  "I'll show you what I understood — nothing is saved until you tap ✅ Confirm.\n\n" +
+  '/unlink — disconnect this Telegram';
+
+// Parse → resolve → ask for confirmation. Nothing is written here.
+async function handleExpenseMessage(chatId, tgId, userId, text) {
+  if (!isLlmConfigured()) {
+    await sendMessage(chatId, "⚠️ The assistant isn't set up yet. You can still add entries in the app.");
+    return;
+  }
+
+  const { currency, people } = await getUserContext(userId);
+  const today = new Date().toISOString().slice(0, 10);
+
+  let extracted;
+  try {
+    extracted = await extractEntries(text, { peopleNames: people.map((p) => p.name), today });
+  } catch (e) {
+    console.error('[telegram] extract failed:', e.message);
+    await sendMessage(chatId, "😵 I couldn't read that. Try something like “gave Jenil 300 for dinner”.");
+    return;
+  }
+
+  if (extracted.needs_clarification) {
+    await sendMessage(chatId, `🤔 ${escape(extracted.clarification || 'Could you clarify that?')}`);
+    return;
+  }
+  if (!extracted.entries.length) {
+    await sendMessage(chatId, "I didn't catch any amounts there. Try “Jenil owes 250 for dinner”.");
+    return;
+  }
+
+  const resolved = resolveEntries(extracted.entries, people);
+
+  const ambiguous = resolved.filter((e) => e.ambiguous);
+  if (ambiguous.length) {
+    const names = [...new Set(ambiguous.map((e) => e.matchedName))].map(escape).join(', ');
+    await sendMessage(chatId, `🤔 More than one person matches “${names}”. Please use their full name.`);
+    return;
+  }
+
+  // Stash the payload; the inline buttons reference it by id.
+  const id = randomBytes(8).toString('hex');
+  const { error } = await supabase.from('telegram_pending').insert({
+    id,
+    telegram_id: tgId,
+    user_id: userId,
+    payload: { resolved, currency },
+  });
+  if (error) {
+    console.error('[telegram] pending insert failed:', error.message);
+    await sendMessage(chatId, '❌ Something went wrong. Please try again.');
+    return;
+  }
+
+  await sendMessage(chatId, `${summaryText(resolved, currency)}\n\nConfirm?`, {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Confirm', callback_data: `ok:${id}` },
+        { text: '❌ Cancel', callback_data: `no:${id}` },
+      ]],
+    },
+  });
+}
+
+// Handles a tap on the Confirm / Cancel inline buttons.
+async function handleCallback(cq) {
+  const chatId = cq.message?.chat?.id;
+  const messageId = cq.message?.message_id;
+  const tgId = cq.from?.id;
+  const [action, id] = String(cq.data || '').split(':');
+  await answerCallbackQuery(cq.id);
+  if (!chatId || !id || (action !== 'ok' && action !== 'no')) return;
+
+  const { data: pending } = await supabase
+    .from('telegram_pending').select('*').eq('id', id).maybeSingle();
+  if (!pending || String(pending.telegram_id) !== String(tgId)) {
+    await editMessageText(chatId, messageId, '⌛ This confirmation has expired. Send the message again.');
+    return;
+  }
+  // Consume it either way.
+  await supabase.from('telegram_pending').delete().eq('id', id);
+
+  if (action === 'no') {
+    await editMessageText(chatId, messageId, '❌ Cancelled — nothing was saved.');
+    return;
+  }
+
+  const { resolved, currency } = pending.payload;
+  let affected;
+  try {
+    affected = await writeEntries(pending.user_id, resolved);
+  } catch (e) {
+    console.error('[telegram] write failed:', e.message);
+    await editMessageText(chatId, messageId, '❌ Could not save those entries. Please try again.');
+    return;
+  }
+
+  const balances = await getBalances(pending.user_id, affected);
+  const lines = affected.map((pid) => {
+    const name = resolved.find((r) => (r.isNew ? true : r.personId === pid))?.matchedName || 'They';
+    return `• <b>${escape(name)}</b> now owes ${escape(formatAmount(balances.get(pid) ?? 0, currency))}`;
+  });
+  await editMessageText(
+    chatId,
+    messageId,
+    `✅ Saved ${resolved.length} ${resolved.length === 1 ? 'entry' : 'entries'}.\n\n${lines.join('\n')}`,
+  );
+}
+
+// Human-readable summary of resolved entries for the confirm prompt.
+function summaryText(resolved, currency) {
+  const lines = resolved.map((e) => {
+    const sign = e.amount >= 0 ? '+' : '−';
+    const tag = e.isNew ? ' <i>(new)</i>' : '';
+    const note = e.note ? ` — ${escape(e.note)}` : '';
+    return `• <b>${escape(e.matchedName)}</b>${tag}  ${sign}${escape(formatAmount(Math.abs(e.amount), currency))}${note}`;
+  });
+  return `Here's what I understood:\n\n${lines.join('\n')}`;
 }
 
 function escape(s = '') {
