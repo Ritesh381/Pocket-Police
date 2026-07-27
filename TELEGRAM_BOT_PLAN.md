@@ -188,7 +188,9 @@ GROQ_MODEL=llama-3.3-70b-versatile   # optional
 
 **Step 5 — Register the webhook once** (tell Telegram where to send updates):
 ```bash
-curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://pocket-police.vercel.app/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://pocket-police.vercel.app/api/telegram/webhook","secret_token":"<TELEGRAM_WEBHOOK_SECRET>","allowed_updates":["message","callback_query"]}'
 ```
 
 That's it — the bot is live and free:
