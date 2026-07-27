@@ -3,15 +3,23 @@ import { config } from '../config.js';
 const api = (method) => `https://api.telegram.org/bot${config.telegram.botToken}/${method}`;
 
 async function call(method, payload) {
-  if (!config.telegram.botToken) return;
+  if (!config.telegram.botToken) return { ok: false, description: 'bot token not configured' };
   try {
-    await fetch(api(method), {
+    const res = await fetch(api(method), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.ok) {
+      const desc = body?.description || `HTTP ${res.status}`;
+      console.error(`[telegram] ${method} error: ${desc}`);
+      return { ok: false, description: desc };
+    }
+    return body;
   } catch (e) {
     console.error(`[telegram] ${method} failed:`, e.message);
+    return { ok: false, description: e.message };
   }
 }
 
@@ -27,8 +35,9 @@ export async function sendMessage(chatId, text, extra = {}) {
 }
 
 // Edits an existing message (used to collapse the inline keyboard after a tap).
+// Returns the Telegram API result so callers can detect failure.
 export async function editMessageText(chatId, messageId, text, extra = {}) {
-  await call('editMessageText', {
+  return call('editMessageText', {
     chat_id: chatId,
     message_id: messageId,
     text,

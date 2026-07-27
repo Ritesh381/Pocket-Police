@@ -215,40 +215,59 @@ async function handleCallback(cq) {
   await answerCallbackQuery(cq.id);
   if (!chatId || !id || (action !== 'ok' && action !== 'no')) return;
 
-  const { data: pending } = await supabase
+  const { data: pending, error: pendingErr } = await supabase
     .from('telegram_pending').select('*').eq('id', id).maybeSingle();
+
+  if (pendingErr) {
+    console.error('[telegram] pending lookup error:', pendingErr.message);
+  }
+
   if (!pending || String(pending.telegram_id) !== String(tgId)) {
-    await editMessageText(chatId, messageId, '⌛ This confirmation has expired. Send the message again.');
+    await reply(chatId, messageId, '⌛ This confirmation has expired. Send the message again.');
     return;
   }
   // Consume it either way.
   await supabase.from('telegram_pending').delete().eq('id', id);
 
   if (action === 'no') {
-    await editMessageText(chatId, messageId, '❌ Cancelled — nothing was saved.');
+    await reply(chatId, messageId, '❌ Cancelled — nothing was saved.');
     return;
   }
 
   const { resolved, currency } = pending.payload;
-  let affected;
   try {
-    affected = await writeEntries(pending.user_id, resolved);
+    const affected = await writeEntries(pending.user_id, resolved);
+    const balances = await getBalances(pending.user_id, affected);
+    const lines = affected.map((pid) => {
+      const entry = resolved.find((r) => {
+        if (r.isNew) {
+          // For new people, personId was null at resolve time; match by name against
+          // the id that writeEntries assigned (which is now in `affected`).
+          return pid === affected.find((a) => a === pid) && r.matchedName;
+        }
+        return r.personId === pid;
+      });
+      const name = entry?.matchedName || 'They';
+      return `• <b>${escape(name)}</b> now owes ${escape(formatAmount(balances.get(pid) ?? 0, currency))}`;
+    });
+    await reply(
+      chatId,
+      messageId,
+      `✅ Saved ${resolved.length} ${resolved.length === 1 ? 'entry' : 'entries'}.\n\n${lines.join('\n')}`,
+    );
   } catch (e) {
-    console.error('[telegram] write failed:', e.message);
-    await editMessageText(chatId, messageId, '❌ Could not save those entries. Please try again.');
-    return;
+    console.error('[telegram] confirm failed:', e.message);
+    await reply(chatId, messageId, '❌ Could not save those entries. Please try again.');
   }
+}
 
-  const balances = await getBalances(pending.user_id, affected);
-  const lines = affected.map((pid) => {
-    const name = resolved.find((r) => (r.isNew ? true : r.personId === pid))?.matchedName || 'They';
-    return `• <b>${escape(name)}</b> now owes ${escape(formatAmount(balances.get(pid) ?? 0, currency))}`;
-  });
-  await editMessageText(
-    chatId,
-    messageId,
-    `✅ Saved ${resolved.length} ${resolved.length === 1 ? 'entry' : 'entries'}.\n\n${lines.join('\n')}`,
-  );
+// Tries to edit the original message; falls back to a new message if editing fails.
+async function reply(chatId, messageId, text) {
+  const result = await editMessageText(chatId, messageId, text);
+  if (result && !result.ok) {
+    console.error('[telegram] editMessageText failed, falling back to sendMessage');
+    await sendMessage(chatId, text);
+  }
 }
 
 // Human-readable summary of resolved entries for the confirm prompt.
