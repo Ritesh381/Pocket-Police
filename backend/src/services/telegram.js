@@ -25,7 +25,7 @@ async function call(method, payload) {
 
 // Sends a message to a Telegram chat. No-op if the bot token isn't configured.
 export async function sendMessage(chatId, text, extra = {}) {
-  await call('sendMessage', {
+  return call('sendMessage', {
     chat_id: chatId,
     text,
     parse_mode: 'HTML',
@@ -49,7 +49,7 @@ export async function editMessageText(chatId, messageId, text, extra = {}) {
 
 // Acknowledges a callback query so Telegram stops the button's loading spinner.
 export async function answerCallbackQuery(callbackQueryId, text) {
-  await call('answerCallbackQuery', {
+  return call('answerCallbackQuery', {
     callback_query_id: callbackQueryId,
     ...(text ? { text } : {}),
   });
