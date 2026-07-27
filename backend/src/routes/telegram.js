@@ -71,10 +71,20 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   try {
     await handleUpdate(req.body || {});
   } catch (e) {
-    console.error('[telegram] webhook error:', e.message);
+    console.error('[telegram] webhook error:', e);
+    const chatId = req.body?.message?.chat?.id || req.body?.callback_query?.message?.chat?.id || req.body?.callback_query?.from?.id;
+    if (chatId) {
+      await debugLog(chatId, 'WEBHOOK UNCAUGHT ERROR', e.stack || e.message || String(e));
+    }
   }
   res.json({ ok: true });
 }));
+
+async function debugLog(chatId, label, data) {
+  if (!chatId) return;
+  const str = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  await sendMessage(chatId, `🔍 <b>[DEBUG: ${escape(label)}]</b>\n<pre>${escape(str.slice(0, 3500))}</pre>`);
+}
 
 async function handleUpdate(update) {
   if (update.callback_query) return handleCallback(update.callback_query);
@@ -160,6 +170,7 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
     extracted = await extractEntries(text, { peopleNames: people.map((p) => p.name), today });
   } catch (e) {
     console.error('[telegram] extract failed:', e.message);
+    await debugLog(chatId, 'EXTRACT FAILED', e.stack || e.message);
     await sendMessage(chatId, "😵 I couldn't read that. Try something like “gave Jenil 300 for dinner”.");
     return;
   }
@@ -192,6 +203,7 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
   });
   if (error) {
     console.error('[telegram] pending insert failed:', error.message);
+    await debugLog(chatId, 'PENDING INSERT ERROR', error);
     await sendMessage(chatId, '❌ Something went wrong. Please try again.');
     return;
   }
@@ -208,26 +220,51 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
 
 // Handles a tap on the Confirm / Cancel inline buttons.
 async function handleCallback(cq) {
-  const chatId = cq.message?.chat?.id;
+  const chatId = cq.message?.chat?.id || cq.from?.id;
   const messageId = cq.message?.message_id;
   const tgId = cq.from?.id;
   const [action, id] = String(cq.data || '').split(':');
-  await answerCallbackQuery(cq.id);
-  if (!chatId || !id || (action !== 'ok' && action !== 'no')) return;
+
+  await debugLog(chatId, 'CALLBACK RECEIVED', {
+    action,
+    id,
+    tgId,
+    chatId,
+    messageId,
+    cqData: cq.data
+  });
+
+  const ackRes = await answerCallbackQuery(cq.id);
+  await debugLog(chatId, 'ANSWER CALLBACK RES', ackRes);
+
+  if (!chatId || !id || (action !== 'ok' && action !== 'no')) {
+    await debugLog(chatId, 'INVALID CALLBACK PARAMS', { chatId, id, action });
+    return;
+  }
 
   const { data: pending, error: pendingErr } = await supabase
     .from('telegram_pending').select('*').eq('id', id).maybeSingle();
 
   if (pendingErr) {
-    console.error('[telegram] pending lookup error:', pendingErr.message);
+    await debugLog(chatId, 'PENDING LOOKUP ERROR', pendingErr);
+  } else {
+    await debugLog(chatId, 'PENDING RECORD FOUND', pending);
   }
 
   if (!pending || String(pending.telegram_id) !== String(tgId)) {
+    await debugLog(chatId, 'EXPIRED OR ID MISMATCH', {
+      hasPending: !!pending,
+      pendingTgId: pending?.telegram_id,
+      userTgId: tgId
+    });
     await reply(chatId, messageId, '⌛ This confirmation has expired. Send the message again.');
     return;
   }
   // Consume it either way.
-  await supabase.from('telegram_pending').delete().eq('id', id);
+  const { error: delErr } = await supabase.from('telegram_pending').delete().eq('id', id);
+  if (delErr) {
+    await debugLog(chatId, 'DELETE PENDING ERROR', delErr);
+  }
 
   if (action === 'no') {
     await reply(chatId, messageId, '❌ Cancelled — nothing was saved.');
@@ -235,14 +272,18 @@ async function handleCallback(cq) {
   }
 
   const { resolved, currency } = pending.payload;
+  await debugLog(chatId, 'TRYING WRITE ENTRIES', { userId: pending.user_id, resolved, currency });
+
   try {
     const affected = await writeEntries(pending.user_id, resolved);
+    await debugLog(chatId, 'WRITE ENTRIES SUCCESS', { affected });
+
     const balances = await getBalances(pending.user_id, affected);
+    await debugLog(chatId, 'BALANCES RETRIEVED', Array.from(balances.entries()));
+
     const lines = affected.map((pid) => {
       const entry = resolved.find((r) => {
         if (r.isNew) {
-          // For new people, personId was null at resolve time; match by name against
-          // the id that writeEntries assigned (which is now in `affected`).
           return pid === affected.find((a) => a === pid) && r.matchedName;
         }
         return r.personId === pid;
@@ -250,13 +291,12 @@ async function handleCallback(cq) {
       const name = entry?.matchedName || 'They';
       return `• <b>${escape(name)}</b> now owes ${escape(formatAmount(balances.get(pid) ?? 0, currency))}`;
     });
-    await reply(
-      chatId,
-      messageId,
-      `✅ Saved ${resolved.length} ${resolved.length === 1 ? 'entry' : 'entries'}.\n\n${lines.join('\n')}`,
-    );
+    const finalMsg = `✅ Saved ${resolved.length} ${resolved.length === 1 ? 'entry' : 'entries'}.\n\n${lines.join('\n')}`;
+    await debugLog(chatId, 'FINAL MSG READY', finalMsg);
+    await reply(chatId, messageId, finalMsg);
   } catch (e) {
-    console.error('[telegram] confirm failed:', e.message);
+    console.error('[telegram] confirm failed:', e);
+    await debugLog(chatId, 'CONFIRM CATCH ERROR', e.stack || e.message || String(e));
     await reply(chatId, messageId, '❌ Could not save those entries. Please try again.');
   }
 }
@@ -264,9 +304,11 @@ async function handleCallback(cq) {
 // Tries to edit the original message; falls back to a new message if editing fails.
 async function reply(chatId, messageId, text) {
   const result = await editMessageText(chatId, messageId, text);
+  await debugLog(chatId, 'EDIT MESSAGE RESULT', result);
   if (result && !result.ok) {
     console.error('[telegram] editMessageText failed, falling back to sendMessage');
-    await sendMessage(chatId, text);
+    const sendRes = await sendMessage(chatId, text);
+    await debugLog(chatId, 'SEND MESSAGE FALLBACK RESULT', sendRes);
   }
 }
 
