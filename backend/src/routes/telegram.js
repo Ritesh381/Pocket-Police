@@ -12,6 +12,8 @@ import {
   writeEntries,
   getBalances,
   formatAmount,
+  getRecentHistory,
+  saveChatMessage,
 } from '../services/telegramLedger.js';
 
 const router = Router();
@@ -162,25 +164,35 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
     return;
   }
 
+  // Record incoming user message
+  await saveChatMessage(userId, tgId, 'user', text);
+
   const { currency, people } = await getUserContext(userId);
+  const history = await getRecentHistory(userId, 5);
   const today = new Date().toISOString().slice(0, 10);
 
   let extracted;
   try {
-    extracted = await extractEntries(text, { peopleNames: people.map((p) => p.name), today });
+    extracted = await extractEntries(text, { peopleNames: people.map((p) => p.name), today, history });
   } catch (e) {
     console.error('[telegram] extract failed:', e.message);
     await debugLog(chatId, 'EXTRACT FAILED', e.stack || e.message);
-    await sendMessage(chatId, "😵 I couldn't read that. Try something like “gave Jenil 300 for dinner”.");
+    const errReply = "😵 I couldn't read that. Try something like “gave Jenil 300 for dinner”.";
+    await saveChatMessage(userId, tgId, 'assistant', errReply);
+    await sendMessage(chatId, errReply);
     return;
   }
 
   if (extracted.needs_clarification) {
+    const askReply = `🤔 ${extracted.clarification || 'Could you clarify that?'}`;
+    await saveChatMessage(userId, tgId, 'assistant', askReply);
     await sendMessage(chatId, `🤔 ${escape(extracted.clarification || 'Could you clarify that?')}`);
     return;
   }
   if (!extracted.entries.length) {
-    await sendMessage(chatId, "I didn't catch any amounts there. Try “Jenil owes 250 for dinner”.");
+    const noEntryReply = "I didn't catch any amounts there. Try “Jenil owes 250 for dinner”.";
+    await saveChatMessage(userId, tgId, 'assistant', noEntryReply);
+    await sendMessage(chatId, noEntryReply);
     return;
   }
 
@@ -189,7 +201,9 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
   const ambiguous = resolved.filter((e) => e.ambiguous);
   if (ambiguous.length) {
     const names = [...new Set(ambiguous.map((e) => e.matchedName))].map(escape).join(', ');
-    await sendMessage(chatId, `🤔 More than one person matches “${names}”. Please use their full name.`);
+    const ambReply = `🤔 More than one person matches “${names}”. Please use their full name.`;
+    await saveChatMessage(userId, tgId, 'assistant', ambReply);
+    await sendMessage(chatId, ambReply);
     return;
   }
 
@@ -208,7 +222,9 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
     return;
   }
 
-  await sendMessage(chatId, `${summaryText(resolved, currency)}\n\nConfirm?`, {
+  const confirmMsg = `${summaryText(resolved, currency)}\n\nConfirm?`;
+  await saveChatMessage(userId, tgId, 'assistant', confirmMsg);
+  await sendMessage(chatId, confirmMsg, {
     reply_markup: {
       inline_keyboard: [[
         { text: '✅ Confirm', callback_data: `ok:${id}` },

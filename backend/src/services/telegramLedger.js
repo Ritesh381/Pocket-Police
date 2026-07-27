@@ -83,4 +83,37 @@ export async function getBalances(userId, personIds) {
   return new Map((data || []).map((b) => [b.person_id, Number(b.balance)]));
 }
 
+// Saves a message to chat history for context.
+export async function saveChatMessage(userId, telegramId, role, content) {
+  if (!content) return;
+  try {
+    await supabase.from('telegram_chat_history').insert({
+      user_id: userId,
+      telegram_id: telegramId,
+      role,
+      content,
+    });
+  } catch (e) {
+    console.error('[telegram] failed to save chat message:', e.message);
+  }
+}
+
+// Fetches the last N messages for a user in chronological order.
+export async function getRecentHistory(userId, limit = 5) {
+  try {
+    const { data } = await supabase
+      .from('telegram_chat_history')
+      .select('role, content')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (!data) return [];
+    return data.reverse().map((m) => ({ role: m.role, content: m.content }));
+  } catch (e) {
+    console.error('[telegram] failed to fetch chat history:', e.message);
+    return [];
+  }
+}
+
 export { formatAmount };

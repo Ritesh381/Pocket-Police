@@ -52,12 +52,17 @@ function systemPrompt(peopleNames, today) {
 
 // Extracts entries from `text`. Returns the validated object, or throws on
 // transport / parse failure so the caller can show a friendly error.
-export async function extractEntries(text, { peopleNames = [], today } = {}) {
+export async function extractEntries(text, { peopleNames = [], today, history = [] } = {}) {
   if (!isLlmConfigured()) {
     const e = new Error('LLM is not configured');
     e.code = 'LLM_NOT_CONFIGURED';
     throw e;
   }
+
+  const historyMessages = (history || []).map((h) => ({
+    role: h.role === 'assistant' ? 'assistant' : 'user',
+    content: String(h.content || ''),
+  }));
 
   const res = await fetch(GROQ_URL, {
     method: 'POST',
@@ -71,6 +76,7 @@ export async function extractEntries(text, { peopleNames = [], today } = {}) {
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt(peopleNames, today) },
+        ...historyMessages,
         { role: 'user', content: text },
       ],
     }),
