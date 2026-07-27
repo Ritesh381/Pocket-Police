@@ -116,4 +116,83 @@ export async function getRecentHistory(userId, limit = 5) {
   }
 }
 
+// Tool helper: Look up a person's balance by name (fuzzy/case-insensitive).
+export async function getPersonBalanceByName(userId, name) {
+  const { people, currency } = await getUserContext(userId);
+  const want = norm(name);
+  const matched = people.find((p) => norm(p.name) === want || norm(p.name).includes(want) || want.includes(norm(p.name)));
+  if (!matched) {
+    return { found: false, name, message: `Person "${name}" is not currently in your records.` };
+  }
+
+  const { data: bal } = await supabase
+    .from('person_balances')
+    .select('balance')
+    .eq('person_id', matched.id)
+    .maybeSingle();
+
+  const balance = Number(bal?.balance ?? 0);
+  return {
+    found: true,
+    person_id: matched.id,
+    name: matched.name,
+    balance,
+    currency,
+    formatted: formatAmount(balance, currency),
+  };
+}
+
+// Tool helper: List all people and their balances for this user.
+export async function listAllBalances(userId) {
+  const [{ data: people }, { data: balances }, { currency }] = await Promise.all([
+    supabase.from('people').select('id, name').eq('user_id', userId),
+    supabase.from('person_balances').select('person_id, balance').eq('user_id', userId),
+    getUserContext(userId),
+  ]);
+
+  const balanceById = new Map((balances || []).map((b) => [b.person_id, Number(b.balance)]));
+  const list = (people || []).map((p) => {
+    const bal = balanceById.get(p.id) ?? 0;
+    return {
+      name: p.name,
+      balance: bal,
+      formatted: formatAmount(bal, currency),
+    };
+  });
+  list.sort((a, b) => b.balance - a.balance);
+
+  return { currency, total_people: list.length, people: list };
+}
+
+// Tool helper: Get recent expense history for a person by name.
+export async function getExpenseHistoryByName(userId, name, limit = 5) {
+  const { people, currency } = await getUserContext(userId);
+  const want = norm(name);
+  const matched = people.find((p) => norm(p.name) === want || norm(p.name).includes(want) || want.includes(norm(p.name)));
+  if (!matched) {
+    return { found: false, name, message: `Person "${name}" is not currently in your records.` };
+  }
+
+  const { data: expenses } = await supabase
+    .from('expenses')
+    .select('amount, note, incurred_on, created_at')
+    .eq('user_id', userId)
+    .eq('person_id', matched.id)
+    .order('incurred_on', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  return {
+    found: true,
+    name: matched.name,
+    currency,
+    expenses: (expenses || []).map((e) => ({
+      amount: Number(e.amount),
+      formatted: formatAmount(Number(e.amount), currency),
+      note: e.note || 'No description',
+      date: e.incurred_on,
+    })),
+  };
+}
+
 export { formatAmount };

@@ -5,7 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { asyncHandler, supabaseError } from '../lib/helpers.js';
 import { config, isTelegramConfigured, isLlmConfigured } from '../config.js';
 import { sendMessage, editMessageText, answerCallbackQuery } from '../services/telegram.js';
-import { extractEntries } from '../services/llm.js';
+import { runAgentLoop } from '../services/llm.js';
 import {
   getUserContext,
   resolveEntries,
@@ -157,7 +157,7 @@ const HELP_TEXT =
   "I'll show you what I understood — nothing is saved until you tap ✅ Confirm.\n\n" +
   '/unlink — disconnect this Telegram';
 
-// Parse → resolve → ask for confirmation. Nothing is written here.
+// Agentic turn handler (supports tools + proposals + queries).
 async function handleExpenseMessage(chatId, tgId, userId, text) {
   if (!isLlmConfigured()) {
     await sendMessage(chatId, "⚠️ The assistant isn't set up yet. You can still add entries in the app.");
@@ -171,17 +171,34 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
   const history = await getRecentHistory(userId, 5);
   const today = new Date().toISOString().slice(0, 10);
 
-  let extracted;
+  let agentResult;
   try {
-    extracted = await extractEntries(text, { peopleNames: people.map((p) => p.name), today, history });
+    agentResult = await runAgentLoop({
+      text,
+      history,
+      peopleNames: people.map((p) => p.name),
+      today,
+      userId,
+    });
   } catch (e) {
-    console.error('[telegram] extract failed:', e.message);
-    await debugLog(chatId, 'EXTRACT FAILED', e.stack || e.message);
-    const errReply = "😵 I couldn't read that. Try something like “gave Jenil 300 for dinner”.";
+    console.error('[telegram] agent loop failed:', e.message);
+    await debugLog(chatId, 'AGENT LOOP FAILED', e.stack || e.message);
+    const errReply = "😵 I couldn't process that right now. Please try again.";
     await saveChatMessage(userId, tgId, 'assistant', errReply);
     await sendMessage(chatId, errReply);
     return;
   }
+
+  // Case 1: Direct text answer from agent (e.g. balance query result)
+  if (agentResult.type === 'text') {
+    const textReply = agentResult.text;
+    await saveChatMessage(userId, tgId, 'assistant', textReply);
+    await sendMessage(chatId, textReply);
+    return;
+  }
+
+  // Case 2: Proposed ledger entries
+  const extracted = agentResult.result;
 
   if (extracted.needs_clarification) {
     const askReply = `🤔 ${extracted.clarification || 'Could you clarify that?'}`;
@@ -190,7 +207,7 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
     return;
   }
   if (!extracted.entries.length) {
-    const noEntryReply = "I didn't catch any amounts there. Try “Jenil owes 250 for dinner”.";
+    const noEntryReply = "I didn't catch any amounts to log. Try “Jenil owes 250 for dinner”.";
     await saveChatMessage(userId, tgId, 'assistant', noEntryReply);
     await sendMessage(chatId, noEntryReply);
     return;

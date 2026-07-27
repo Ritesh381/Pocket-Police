@@ -1,17 +1,13 @@
-// LLM adapter for the Telegram bot. Turns a plain-language message into
-// STRUCTURED ledger entries — never SQL (see TELEGRAM_BOT_PLAN.md §0).
-//
-// Provider: Groq (OpenAI-compatible chat completions, JSON mode). Swapping to a
-// different provider later is a one-file change — keep the `extractEntries`
-// signature stable.
 import { z } from 'zod';
 import { config, isLlmConfigured } from '../config.js';
+import {
+  getPersonBalanceByName,
+  listAllBalances,
+  getExpenseHistoryByName,
+} from './telegramLedger.js';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-// What the model must return. `amount` is SIGNED, matching the app's convention:
-//   positive = the person received money / owes more
-//   negative = the person paid you back
 const extractionSchema = z.object({
   entries: z
     .array(
@@ -30,29 +26,98 @@ const extractionSchema = z.object({
   clarification: z.string().nullish(),
 });
 
-function systemPrompt(peopleNames, today) {
+// Tool schemas for OpenAI / Groq tool calling
+const AGENT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_person_balance',
+      description: "Looks up a person's current balance and contact record by name. Use this when the user mentions someone paying back 'all' their debt or asks what someone owes.",
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Name of the person to look up' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_all_balances',
+      description: 'Lists all debtors and their current balances for this user. Use when asked "who owes me money" or "total debt" or "show all balances".',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_expense_history',
+      description: 'Fetches recent expense transactions for a specific person.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Name of the person' },
+          limit: { type: 'number', description: 'Number of recent items (default 5)' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_ledger_entries',
+      description: 'Proposes one or more debt/credit entries to be recorded to the ledger after confirmation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entries: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                person: { type: 'string', description: 'Name of person' },
+                amount: { type: 'number', description: 'Signed amount (+ for lent/took, - for repaid/returned)' },
+                note: { type: 'string', description: 'Optional description of what the money was for' },
+                date: { type: 'string', description: 'YYYY-MM-DD date if specified' },
+              },
+              required: ['person', 'amount'],
+            },
+          },
+          needs_clarification: { type: 'boolean', description: 'True if details are still ambiguous' },
+          clarification: { type: 'string', description: 'Question to ask the user if clarification is needed' },
+        },
+        required: ['entries'],
+      },
+    },
+  },
+];
+
+function agentSystemPrompt(peopleNames, today) {
   const roster = peopleNames.length
-    ? `The user already tracks these people (match names to them, case-insensitive, allowing small typos): ${peopleNames.join(', ')}.`
-    : 'The user has no people saved yet.';
+    ? `Existing contacts: ${peopleNames.join(', ')}.`
+    : 'No contacts saved yet.';
   return [
-    'You extract debt-ledger entries from a short message written by the user of a personal debt tracker.',
-    'You output ONLY a JSON object — no prose. Shape:',
-    '{ "entries": [ { "person": string, "amount": number, "note": string|null, "date": "YYYY-MM-DD"|null } ], "needs_clarification": boolean, "clarification": string|null }',
+    'You are the intelligent debt assistant for Pocket Police.',
+    'Your goal is to help the user log debts/repayments or answer balance queries.',
     '',
-    'Rules:',
-    '- "amount" is SIGNED. Positive = the person received money from the user / now owes more (e.g. "gave Jenil 300", "Jenil took 500", "lent Aman 200"). Negative = the person paid the user back / owes less (e.g. "Jenil paid back 100", "Shubham returned 50").',
-    '- Split a multi-person or multi-item message into one entry per person per item.',
-    '- "note" is a short description of what the money was for (e.g. "dinner", "cab"). Null if none.',
-    '- "date" only if the message clearly states one; otherwise null. Resolve relative dates against today.',
-    '- Never invent amounts or people. If an amount or who-owes-whom is ambiguous, set needs_clarification=true and put a short question in "clarification", with entries=[].',
+    'Tool Usage Rules:',
+    '- If the user says a person "paid back all their money" or "settled up", DO NOT ask how much they owe! Call `get_person_balance(name)` first to look up their balance, then call `propose_ledger_entries` with amount = -balance.',
+    '- If the user asks a question about balances (e.g. "how much does X owe?", "who owes me money?"), use `get_person_balance` or `list_all_balances` to check, then answer in clear text.',
+    '- When the user wants to log a debt/credit entry, call `propose_ledger_entries`.',
+    '- `amount` is SIGNED: positive (+) = person owes more / took money. Negative (-) = person paid back / returned money.',
     `- ${roster}`,
     `- Today is ${today}.`,
   ].join('\n');
 }
 
-// Extracts entries from `text`. Returns the validated object, or throws on
-// transport / parse failure so the caller can show a friendly error.
-export async function extractEntries(text, { peopleNames = [], today, history = [] } = {}) {
+// ReAct Agent Loop: runs up to `maxTurns` tool iterations with Groq.
+export async function runAgentLoop({ text, history = [], peopleNames = [], today, userId }) {
   if (!isLlmConfigured()) {
     const e = new Error('LLM is not configured');
     e.code = 'LLM_NOT_CONFIGURED';
@@ -64,38 +129,102 @@ export async function extractEntries(text, { peopleNames = [], today, history = 
     content: String(h.content || ''),
   }));
 
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.llm.groqApiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.llm.groqModel,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt(peopleNames, today) },
-        ...historyMessages,
-        { role: 'user', content: text },
-      ],
-    }),
-  });
+  const messages = [
+    { role: 'system', content: agentSystemPrompt(peopleNames, today) },
+    ...historyMessages,
+    { role: 'user', content: text },
+  ];
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Groq request failed (${res.status}): ${body.slice(0, 300)}`);
+  let turns = 0;
+  const maxTurns = 5;
+
+  while (turns < maxTurns) {
+    turns++;
+    const res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.llm.groqApiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.llm.groqModel,
+        temperature: 0,
+        tools: AGENT_TOOLS,
+        tool_choice: 'auto',
+        messages,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Groq request failed (${res.status}): ${body.slice(0, 300)}`);
+    }
+
+    const data = await res.json();
+    const message = data?.choices?.[0]?.message;
+    if (!message) throw new Error('Groq returned an empty response');
+
+    const toolCalls = message.tool_calls;
+
+    // If the model called a tool:
+    if (toolCalls && toolCalls.length > 0) {
+      messages.push(message); // Add assistant tool_calls message
+
+      for (const call of toolCalls) {
+        const fnName = call.function?.name;
+        let fnArgs = {};
+        try {
+          fnArgs = JSON.parse(call.function?.arguments || '{}');
+        } catch {
+          fnArgs = {};
+        }
+
+        // If the model called `propose_ledger_entries`, we finish the agent loop!
+        if (fnName === 'propose_ledger_entries') {
+          const parsed = extractionSchema.parse(fnArgs);
+          return { type: 'propose_entries', result: parsed };
+        }
+
+        // Execute DB lookup tool
+        let toolOutput;
+        if (fnName === 'get_person_balance') {
+          toolOutput = await getPersonBalanceByName(userId, fnArgs.name);
+        } else if (fnName === 'list_all_balances') {
+          toolOutput = await listAllBalances(userId);
+        } else if (fnName === 'get_expense_history') {
+          toolOutput = await getExpenseHistoryByName(userId, fnArgs.name, fnArgs.limit || 5);
+        } else {
+          toolOutput = { error: `Unknown tool: ${fnName}` };
+        }
+
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: JSON.stringify(toolOutput),
+        });
+      }
+
+      // Loop continues so LLM processes the tool outputs!
+      continue;
+    }
+
+    // No tool call -> model returned a direct text response
+    if (message.content) {
+      return { type: 'text', text: message.content.trim() };
+    }
+
+    break;
   }
 
-  const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error('Groq returned an empty response');
+  // Fallback if loop ends without explicit proposal or text
+  return { type: 'text', text: "I processed your request. Is there anything else you need?" };
+}
 
-  let parsed;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    throw new Error('Groq did not return valid JSON');
+// Fallback single-shot extractor kept for backwards compatibility
+export async function extractEntries(text, options = {}) {
+  const result = await runAgentLoop({ text, ...options });
+  if (result.type === 'propose_entries') {
+    return result.result;
   }
-  return extractionSchema.parse(parsed);
+  return { entries: [], needs_clarification: false, clarification: null };
 }
