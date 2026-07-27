@@ -230,6 +230,36 @@ Bot:  Done ✅
 
 ---
 
+## 11. Debugging & Webhook Troubleshooting
+
+### Enabling In-Chat Live Debug Logs
+If you need to debug webhook events, LLM extraction, or callback button clicks live in Telegram chat:
+
+1. **Set Environment Variable:**
+   Set `TELEGRAM_DEBUG=true` in `.env` (or in Vercel Project Settings → Environment Variables).
+2. **Redeploy / Restart:**
+   Deploy or restart the server.
+3. **Usage:**
+   Any Telegram update (message or inline button tap) will stream formatted `[DEBUG: ...]` blocks directly into your Telegram chat showing payloads, DB operations, and API call results.
+4. **Disabling:**
+   Set `TELEGRAM_DEBUG=false` (or remove `TELEGRAM_DEBUG`) to turn off in-chat debug logs.
+
+### Registering / Repairing Telegram Webhook
+To ensure Telegram delivers both text messages and inline keyboard button clicks (`callback_query`), `allowed_updates` MUST include `["message", "callback_query"]`.
+
+Run the automated backend script:
+```bash
+npm run telegram:setup
+```
+Or manually:
+```bash
+curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://<YOUR_API_URL>/api/telegram/webhook","secret_token":"<TELEGRAM_WEBHOOK_SECRET>","allowed_updates":["message","callback_query"]}'
+```
+
+---
+
 ## Open questions
 - **Group chats?** v1 = private 1:1 chat only (identity is clear). Group support later.
 - **Read-back commands** beyond balance (e.g. "what did Jenil buy last month")? Same structured pattern, read-only.

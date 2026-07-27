@@ -47,6 +47,7 @@ export const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
     botUsername: (process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, ''),
     webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || '',
+    debug: process.env.TELEGRAM_DEBUG === 'true',
   },
 
   // LLM used by the Telegram bot to turn plain-language messages into ledger

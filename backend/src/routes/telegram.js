@@ -81,7 +81,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 }));
 
 async function debugLog(chatId, label, data) {
-  if (!chatId) return;
+  if (!config.telegram.debug || !chatId) return;
   const str = typeof data === 'string' ? data : (JSON.stringify(data, null, 2) ?? String(data));
   await sendMessage(chatId, `🔍 <b>[DEBUG: ${escape(label)}]</b>\n<pre>${escape((str || '').slice(0, 3500))}</pre>`);
 }
