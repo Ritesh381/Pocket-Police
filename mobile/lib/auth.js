@@ -14,13 +14,26 @@ export const useAuth = () => useContext(AuthContext);
 export const redirectTo = makeRedirectUri({ path: 'auth-callback' });
 
 async function createSessionFromUrl(url) {
+  if (!url) return null;
   const { params, errorCode } = QueryParams(url);
-  if (errorCode) throw new Error(errorCode);
+  if (errorCode) {
+    console.warn('[auth] Deep link error code:', errorCode, params.error_description);
+    throw new Error(params.error_description || errorCode);
+  }
 
   // PKCE flow returns a `code` to exchange; implicit returns tokens directly.
   if (params.code) {
+    // Check if session is already active (to prevent duplicate exchange error)
+    const { data: current } = await supabase.auth.getSession();
+    if (current?.session) return current.session;
+
     const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
-    if (error) throw error;
+    if (error) {
+      // If code was already exchanged by another handler, ignore if session exists
+      const { data: check } = await supabase.auth.getSession();
+      if (check?.session) return check.session;
+      throw error;
+    }
     return data.session;
   }
   if (params.access_token) {
@@ -67,20 +80,28 @@ export function AuthProvider({ children }) {
   const url = Linking.useURL();
   useEffect(() => {
     if (url && url.includes('auth-callback')) {
-      createSessionFromUrl(url).catch((e) => console.warn('[auth] callback error', e.message));
+      if (__DEV__) console.log('[auth] Received deep link:', url);
+      createSessionFromUrl(url)
+        .then(() => WebBrowser.dismissBrowser())
+        .catch((e) => console.warn('[auth] callback error:', e.message));
     }
   }, [url]);
 
   const signInWithGoogle = useCallback(async () => {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo, skipBrowserRedirect: true },
-    });
-    if (error) throw error;
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo, skipBrowserRedirect: true },
+      });
+      if (error) throw error;
 
-    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-    if (result.type === 'success' && result.url) {
-      await createSessionFromUrl(result.url);
+      if (__DEV__) console.log('[auth] Opening auth session for URL:', data.url, 'with redirect:', redirectTo);
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type === 'success' && result.url) {
+        await createSessionFromUrl(result.url);
+      }
+    } finally {
+      WebBrowser.dismissBrowser();
     }
   }, []);
 
