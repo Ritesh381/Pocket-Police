@@ -45,3 +45,28 @@ export const profileUpdateSchema = z.object({
   currency: z.string().trim().length(3, 'Use a 3-letter currency code').optional(),
   upi_id: z.string().trim().max(100).nullish().transform((v) => (v === '' ? null : v)),
 }).refine((obj) => Object.keys(obj).length > 0, { message: 'No fields to update' });
+
+export const personalExpenseCreateSchema = z.object({
+  amount: z.coerce.number().positive('Amount must be positive'),
+  category_id: z.string().uuid().nullish().transform(emptyToNull),
+  note: z.string().trim().max(500).nullish().transform(emptyToNull),
+  payment_mode: z.enum(['upi', 'cash', 'card', 'bank_transfer', 'other']).default('upi'),
+  incurred_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').optional(),
+  linked_friend_expense_id: z.string().uuid().nullish().transform(emptyToNull),
+});
+
+export const personalExpenseUpdateSchema = personalExpenseCreateSchema.partial().refine(
+  (obj) => Object.keys(obj).length > 0,
+  { message: 'No fields to update' },
+);
+
+export const categoryCreateSchema = z.object({
+  name: z.string().trim().min(1, 'Category name is required').max(60),
+  icon: z.string().trim().max(40).default('category'),
+  color: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, 'Must be a 6-digit hex color').default('#6366f1'),
+});
+
+export const budgetUpdateSchema = z.object({
+  month_year: z.string().regex(/^\d{4}-\d{2}$/, 'Use YYYY-MM format'),
+  monthly_limit: z.coerce.number().positive('Budget limit must be positive'),
+});

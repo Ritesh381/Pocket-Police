@@ -31,6 +31,24 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'log_personal_expense',
+      description: 'Logs a personal spending expense (e.g. "spent 250 on lunch", "bought groceries for 1200", "paid 500 for uber"). Use this when NO friend name is mentioned as receiving or owing money.',
+      parameters: {
+        type: 'object',
+        properties: {
+          amount: { type: 'number', description: 'Positive amount spent' },
+          category: { type: 'string', description: 'Inferred category: Food & Dining, Shopping, Transport & Cab, Groceries, Bills & Utilities, Entertainment, Health & Medical, Travel, Education, or Others' },
+          note: { type: 'string', description: 'Short note/description of what was bought' },
+          payment_mode: { type: 'string', enum: ['upi', 'cash', 'card', 'bank_transfer', 'other'], description: 'Payment mode if mentioned (default upi)' },
+          date: { type: 'string', description: 'YYYY-MM-DD date if specified' },
+        },
+        required: ['amount'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_person_balance',
       description: "Looks up a person's current balance and contact record by name. Use this when the user mentions someone paying back 'all' their debt or asks what someone owes.",
       parameters: {
@@ -72,7 +90,7 @@ const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'propose_ledger_entries',
-      description: 'Proposes one or more debt/credit entries to be recorded to the ledger after confirmation.',
+      description: 'Proposes one or more debt/credit entries for a friend to be recorded to the ledger after confirmation.',
       parameters: {
         type: 'object',
         properties: {
@@ -103,14 +121,14 @@ function agentSystemPrompt(peopleNames, today) {
     ? `Existing contacts: ${peopleNames.join(', ')}.`
     : 'No contacts saved yet.';
   return [
-    'You are the intelligent debt assistant for Pocket Police.',
-    'Your goal is to help the user log debts/repayments or answer balance queries.',
+    'You are the intelligent finance & debt assistant for Pocket Police.',
+    'Your goal is to help the user log personal spending, manage friend debts, or answer balance queries.',
     '',
     'Tool Usage Rules:',
-    '- If the user says a person "paid back all their money" or "settled up", DO NOT ask how much they owe! Call `get_person_balance(name)` first to look up their balance, then call `propose_ledger_entries` with amount = -balance.',
+    '- If the user logs personal spending (e.g. "spent 250 on lunch", "paid 500 for cab", "bought shirt for 1200"), call `log_personal_expense`. Do NOT ask for confirmation.',
+    '- If a friend/person is mentioned as borrowing, taking, or returning money (e.g. "gave Jenil 300", "Ritesh returned 150"), call `propose_ledger_entries`.',
+    '- If the user says a person "paid back all their money" or "settled up", call `get_person_balance(name)` first to look up their balance, then call `propose_ledger_entries` with amount = -balance.',
     '- If the user asks a question about balances (e.g. "how much does X owe?", "who owes me money?"), use `get_person_balance` or `list_all_balances` to check, then answer in clear text.',
-    '- When the user wants to log a debt/credit entry, call `propose_ledger_entries`.',
-    '- `amount` is SIGNED: positive (+) = person owes more / took money. Negative (-) = person paid back / returned money.',
     `- ${roster}`,
     `- Today is ${today}.`,
   ].join('\n');
@@ -185,9 +203,15 @@ export async function runAgentLoop({ text, history = [], peopleNames = [], today
           return { type: 'propose_entries', result: parsed };
         }
 
-        // Execute DB lookup tool
+        // Execute DB tool
         let toolOutput;
-        if (fnName === 'get_person_balance') {
+        if (fnName === 'log_personal_expense') {
+          toolOutput = await logPersonalExpenseFromBot(userId, fnArgs);
+          return {
+            type: 'text',
+            text: `✅ Logged personal expense: <b>${toolOutput.formatted_amount}</b> for ${toolOutput.note} (${toolOutput.category})`,
+          };
+        } else if (fnName === 'get_person_balance') {
           toolOutput = await getPersonBalanceByName(userId, fnArgs.name);
         } else if (fnName === 'list_all_balances') {
           toolOutput = await listAllBalances(userId);

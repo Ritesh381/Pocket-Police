@@ -195,4 +195,51 @@ export async function getExpenseHistoryByName(userId, name, limit = 5) {
   };
 }
 
+// Tool helper: Log a personal expense directly from Telegram bot
+export async function logPersonalExpenseFromBot(userId, { amount, category, note, payment_mode, date }) {
+  const { currency } = await getUserContext(userId);
+
+  // Match category by name or fallback to 'Others'
+  let categoryId = null;
+  let categoryName = category || 'Others';
+
+  if (category) {
+    const wantCat = norm(category);
+    const { data: cats } = await supabase
+      .from('expense_categories')
+      .select('id, name')
+      .or(`is_system.eq.true,user_id.eq.${userId}`);
+
+    const matchedCat = (cats || []).find((c) => norm(c.name).includes(wantCat) || wantCat.includes(norm(c.name)));
+    if (matchedCat) {
+      categoryId = matchedCat.id;
+      categoryName = matchedCat.name;
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('personal_expenses')
+    .insert({
+      user_id: userId,
+      category_id: categoryId,
+      amount: Math.abs(amount),
+      note: note || categoryName,
+      payment_mode: payment_mode || 'upi',
+      ...(date ? { incurred_on: date } : {}),
+    })
+    .select('id, amount, note, incurred_on')
+    .single();
+
+  if (error) throw new Error(`Could not log personal expense: ${error.message}`);
+
+  return {
+    success: true,
+    id: data.id,
+    amount: Number(data.amount),
+    formatted_amount: formatAmount(Number(data.amount), currency),
+    category: categoryName,
+    note: data.note,
+  };
+}
+
 export { formatAmount };

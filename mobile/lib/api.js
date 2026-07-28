@@ -77,4 +77,24 @@ export const api = {
   getTelegramStatus: () => request('GET', '/api/telegram/status'),
   telegramLinkToken: () => request('POST', '/api/telegram/link-token'),
   telegramUnlink: () => request('POST', '/api/telegram/unlink'),
+
+  // Personal Expenses & Budgeting
+  getCategories: () => request('GET', '/api/categories'),
+  createCategory: (body) => request('POST', '/api/categories', body),
+
+  getPersonalExpenses: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.month) q.set('month', params.month);
+    if (params.category_id) q.set('category_id', params.category_id);
+    if (params.q) q.set('q', params.q);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return request('GET', `/api/personal-expenses${qs}`);
+  },
+  getPersonalAnalytics: (month) => request('GET', `/api/personal-expenses/analytics${month ? `?month=${month}` : ''}`),
+  addPersonalExpense: (body) => request('POST', '/api/personal-expenses', body),
+  updatePersonalExpense: (id, body) => request('PATCH', `/api/personal-expenses/${id}`, body),
+  deletePersonalExpense: (id) => request('DELETE', `/api/personal-expenses/${id}`),
+
+  getBudget: (month) => request('GET', `/api/budgets${month ? `?month=${month}` : ''}`),
+  setBudget: (body) => request('POST', '/api/budgets', body),
 };

@@ -19,9 +19,25 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          title: 'Personal Expenses',
+          tabBarLabel: 'Expenses',
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="receipt-long" color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="analytics"
+        options={{
+          title: 'Analytics & Budget',
+          tabBarLabel: 'Analytics',
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="insights" color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="debts"
+        options={{
           title: 'Pocket Police',
-          tabBarLabel: 'Home',
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="home" color={color} size={size} />,
+          tabBarLabel: 'Debts',
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="people" color={color} size={size} />,
         }}
       />
       <Tabs.Screen

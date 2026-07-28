@@ -13,6 +13,9 @@ import profileRouter from './routes/profile.js';
 import settingsRouter from './routes/settings.js';
 import remindersRouter from './routes/reminders.js';
 import telegramRouter from './routes/telegram.js';
+import categoriesRouter from './routes/categories.js';
+import personalExpensesRouter from './routes/personalExpenses.js';
+import budgetsRouter from './routes/budgets.js';
 
 // Builds the Express app. Exported so it can run both as a long-lived server
 // (local dev, src/index.js) and as a serverless handler (Vercel, api/index.js).
@@ -39,6 +42,9 @@ app.use('/api/settings', requireAuth, settingsRouter);
 app.use('/api/dashboard', requireAuth, dashboardRouter);
 app.use('/api/people', requireAuth, peopleRouter);
 app.use('/api/expenses', requireAuth, expensesRouter);
+app.use('/api/categories', requireAuth, categoriesRouter);
+app.use('/api/personal-expenses', requireAuth, personalExpensesRouter);
+app.use('/api/budgets', requireAuth, budgetsRouter);
 
 app.use(notFound);
 app.use(errorHandler);
