@@ -128,13 +128,16 @@ need the Vercel URL baked in. Provide these to EAS as environment variables
 (These are all client-safe values — the anon key is protected by RLS and is embedded in
 the app bundle anyway.)
 
-### 3b. Supabase redirect URL
-Already configured, but confirm **Supabase → Authentication → URL Configuration →
-Redirect URLs** contains:
+### 3b. Supabase redirect URLs
+Confirm **Supabase → Authentication → URL Configuration → Redirect URLs** contains
+**both** schemes:
 ```
 vasulibhai://auth-callback
+vasulibhaidev://auth-callback
 ```
-(The app's deep-link scheme is `vasulibhai://` — unchanged, so Google sign-in keeps working.)
+The `development` EAS profile installs a separate app (`Pocket Police (dev)`) with its own
+scheme, `vasulibhaidev://` (see `app.config.js`). Google sign-in fails silently in a dev
+build if only the production scheme is allowlisted.
 
 ### 3c. Build a shareable APK (preview)
 ```bash
