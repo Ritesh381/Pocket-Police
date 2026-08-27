@@ -183,7 +183,12 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
   } catch (e) {
     console.error('[telegram] agent loop failed:', e.message);
     await debugLog(chatId, 'AGENT LOOP FAILED', e.stack || e.message);
-    const errReply = "😵 I couldn't process that right now. Please try again.";
+    const errReply =
+      e.code === 'LLM_RATE_LIMITED'
+        ? "⏳ I'm being rate limited right now. Give it a minute and send that again."
+        : e.code === 'LLM_MODEL_UNAVAILABLE' || e.code === 'LLM_NOT_CONFIGURED'
+        ? "⚠️ The assistant is misconfigured on the server (LLM unavailable). Retrying won't help — you can still add entries in the app."
+        : "😵 I couldn't process that right now. Please try again.";
     await saveChatMessage(userId, tgId, 'assistant', errReply);
     await sendMessage(chatId, errReply);
     return;

@@ -4,9 +4,14 @@ import {
   getPersonBalanceByName,
   listAllBalances,
   getExpenseHistoryByName,
+  logPersonalExpenseFromBot,
 } from './telegramLedger.js';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+function escapeHtml(s = '') {
+  return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
 
 const extractionSchema = z.object({
   entries: z
@@ -127,11 +132,59 @@ function agentSystemPrompt(peopleNames, today) {
     'Tool Usage Rules:',
     '- If the user logs personal spending (e.g. "spent 250 on lunch", "paid 500 for cab", "bought shirt for 1200"), call `log_personal_expense`. Do NOT ask for confirmation.',
     '- If a friend/person is mentioned as borrowing, taking, or returning money (e.g. "gave Jenil 300", "Ritesh returned 150"), call `propose_ledger_entries`.',
+    '- Shorthand like "Lakshya -362 pizza" or "Shubham +35 cold coffee" is a ledger entry. When the user writes an explicit + or - in front of the amount, pass that sign through EXACTLY as written — never flip it.',
     '- If the user says a person "paid back all their money" or "settled up", call `get_person_balance(name)` first to look up their balance, then call `propose_ledger_entries` with amount = -balance.',
     '- If the user asks a question about balances (e.g. "how much does X owe?", "who owes me money?"), use `get_person_balance` or `list_all_balances` to check, then answer in clear text.',
     `- ${roster}`,
     `- Today is ${today}.`,
   ].join('\n');
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// One chat-completions call. Groq's free tier is 8k tokens/min and the agent
+// loop can burn several turns per user message, so a 429 gets a couple of short
+// retries instead of surfacing as "I couldn't process that".
+async function groqChat(messages, { retries = 2 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.llm.groqApiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.llm.groqModel,
+        temperature: 0,
+        tools: AGENT_TOOLS,
+        tool_choice: 'auto',
+        messages,
+      }),
+    });
+
+    if (res.ok) return res.json();
+
+    const body = await res.text().catch(() => '');
+
+    if (res.status === 429 && attempt < retries) {
+      const retryAfter = Number(res.headers.get('retry-after'));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 8000)
+        : 1500 * (attempt + 1);
+      console.warn(`[llm] Groq rate limited, retrying in ${waitMs}ms`);
+      await sleep(waitMs);
+      continue;
+    }
+
+    const err = new Error(
+      `Groq request failed (${res.status}) for model "${config.llm.groqModel}": ${body.slice(0, 300)}`,
+    );
+    // Groq retires models; a decommissioned GROQ_MODEL 404s on every single
+    // turn, so surface it as a config problem instead of a transient blip.
+    if (res.status === 404 || body.includes('model_not_found')) err.code = 'LLM_MODEL_UNAVAILABLE';
+    if (res.status === 429) err.code = 'LLM_RATE_LIMITED';
+    throw err;
+  }
 }
 
 // ReAct Agent Loop: runs up to `maxTurns` tool iterations with Groq.
@@ -158,27 +211,7 @@ export async function runAgentLoop({ text, history = [], peopleNames = [], today
 
   while (turns < maxTurns) {
     turns++;
-    const res = await fetch(GROQ_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.llm.groqApiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.llm.groqModel,
-        temperature: 0,
-        tools: AGENT_TOOLS,
-        tool_choice: 'auto',
-        messages,
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`Groq request failed (${res.status}): ${body.slice(0, 300)}`);
-    }
-
-    const data = await res.json();
+    const data = await groqChat(messages);
     const message = data?.choices?.[0]?.message;
     if (!message) throw new Error('Groq returned an empty response');
 
@@ -209,7 +242,7 @@ export async function runAgentLoop({ text, history = [], peopleNames = [], today
           toolOutput = await logPersonalExpenseFromBot(userId, fnArgs);
           return {
             type: 'text',
-            text: `✅ Logged personal expense: <b>${toolOutput.formatted_amount}</b> for ${toolOutput.note} (${toolOutput.category})`,
+            text: `✅ Logged personal expense: <b>${escapeHtml(toolOutput.formatted_amount)}</b> for ${escapeHtml(toolOutput.note)} (${escapeHtml(toolOutput.category)})`,
           };
         } else if (fnName === 'get_person_balance') {
           toolOutput = await getPersonBalanceByName(userId, fnArgs.name);
@@ -232,9 +265,10 @@ export async function runAgentLoop({ text, history = [], peopleNames = [], today
       continue;
     }
 
-    // No tool call -> model returned a direct text response
+    // No tool call -> model returned a direct text response. Telegram sends with
+    // parse_mode HTML, so escape it — a stray "<" makes the whole send 400.
     if (message.content) {
-      return { type: 'text', text: message.content.trim() };
+      return { type: 'text', text: escapeHtml(message.content.trim()) };
     }
 
     break;

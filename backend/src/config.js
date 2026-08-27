@@ -55,8 +55,9 @@ export const config = {
   llm: {
     provider: 'groq',
     groqApiKey: process.env.GROQ_API_KEY || '',
-    // Any Groq-hosted model; default is a strong, cheap instruction follower.
-    groqModel: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    // Any Groq-hosted model that supports tool calling. Groq retires models
+    // periodically — check https://console.groq.com/docs/models before pinning.
+    groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
   },
 
   // CORS: comma-separated list of allowed origins, or "*" for any (dev only).
