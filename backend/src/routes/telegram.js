@@ -6,6 +6,7 @@ import { asyncHandler, supabaseError } from '../lib/helpers.js';
 import { config, isTelegramConfigured, isLlmConfigured } from '../config.js';
 import { sendMessage, editMessageText, answerCallbackQuery } from '../services/telegram.js';
 import { runAgentLoop } from '../services/llm.js';
+import { applyMutation } from '../services/telegramTools.js';
 import {
   getUserContext,
   resolveEntries,
@@ -150,11 +151,23 @@ async function handleUpdate(update) {
 
 const HELP_TEXT =
   '<b>Pocket Police bot</b>\n\n' +
-  'Just tell me who owes what, in plain language:\n' +
-  '• <i>“gave Jenil 300 for pizza”</i>\n' +
-  '• <i>“Shubham owes 250 for dinner, paid back 100”</i>\n' +
-  '• <i>“lent Aman 500 for the concert”</i>\n\n' +
-  "I'll show you what I understood — nothing is saved until you tap ✅ Confirm.\n\n" +
+  'Talk to me in plain language — I can read, add, edit and delete anything in your account.\n\n' +
+  '<b>Log</b>\n' +
+  '• <i>“spent 250 on lunch”</i> — your own spending\n' +
+  '• <i>“gave Jenil 300 for pizza”</i> — a friend owes you\n' +
+  '• <i>“Shubham -600 paid back”</i> — a repayment\n\n' +
+  '<b>Ask</b>\n' +
+  '• <i>“who owes me money?”</i>\n' +
+  '• <i>“show all transactions with Lakshya”</i>\n' +
+  '• <i>“what did I spend on food in July?”</i>\n' +
+  '• <i>“am I over budget?”</i>\n\n' +
+  '<b>Change</b>\n' +
+  '• <i>“rename Lakshya to Lakshya Mewara”</i>\n' +
+  '• <i>“change the pizza entry to 400”</i>\n' +
+  '• <i>“delete yesterday’s coffee expense”</i>\n' +
+  '• <i>“set my monthly budget to 15000”</i>\n' +
+  '• <i>“remind Jenil to pay”</i>\n\n' +
+  'Anything that edits or deletes shows a preview first — nothing is saved until you tap ✅.\n\n' +
   '/unlink — disconnect this Telegram';
 
 // Agentic turn handler (supports tools + proposals + queries).
@@ -202,7 +215,17 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
     return;
   }
 
-  // Case 2: Proposed ledger entries
+  // Case 2: An edit/delete/settings change awaiting a tap. Nothing has been
+  // written yet — the action is stashed and replayed on Confirm.
+  if (agentResult.type === 'confirm') {
+    await askToConfirm(chatId, tgId, userId, {
+      kind: 'mutation',
+      action: agentResult.action,
+    }, agentResult.previewHtml);
+    return;
+  }
+
+  // Case 3: Proposed ledger entries
   const extracted = agentResult.result;
 
   if (extracted.needs_clarification) {
@@ -229,13 +252,25 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
     return;
   }
 
-  // Stash the payload; the inline buttons reference it by id.
+  await askToConfirm(
+    chatId,
+    tgId,
+    userId,
+    { kind: 'ledger_entries', resolved, currency },
+    summaryText(resolved, currency),
+  );
+}
+
+// Stashes a payload the inline buttons refer to by id, and asks. The bot is
+// serverless, so the pending action has to survive in the database between the
+// question and the tap.
+async function askToConfirm(chatId, tgId, userId, payload, previewHtml) {
   const id = randomBytes(8).toString('hex');
   const { error } = await supabase.from('telegram_pending').insert({
     id,
     telegram_id: tgId,
     user_id: userId,
-    payload: { resolved, currency },
+    payload,
   });
   if (error) {
     console.error('[telegram] pending insert failed:', error.message);
@@ -244,7 +279,7 @@ async function handleExpenseMessage(chatId, tgId, userId, text) {
     return;
   }
 
-  const confirmMsg = `${summaryText(resolved, currency)}\n\nConfirm?`;
+  const confirmMsg = `${previewHtml}\n\nConfirm?`;
   await saveChatMessage(userId, tgId, 'assistant', confirmMsg);
   await sendMessage(chatId, confirmMsg, {
     reply_markup: {
@@ -306,6 +341,27 @@ async function handleCallback(cq) {
 
   if (action === 'no') {
     await reply(chatId, messageId, '❌ Cancelled — nothing was saved.');
+    return;
+  }
+
+  // Payloads written before mutations existed have no `kind`; they are ledger
+  // entries by definition.
+  if (pending.payload?.kind === 'mutation') {
+    await debugLog(chatId, 'APPLYING MUTATION', pending.payload.action);
+    try {
+      const { message } = await applyMutation(pending.user_id, pending.payload.action);
+      await reply(chatId, messageId, message);
+    } catch (e) {
+      console.error('[telegram] mutation failed:', e);
+      await debugLog(chatId, 'MUTATION CATCH ERROR', e.stack || e.message || String(e));
+      await reply(
+        chatId,
+        messageId,
+        e.code === 'TOOL_BAD_REQUEST'
+          ? `❌ ${escape(e.message)}`
+          : '❌ Could not apply that change. Please try again.',
+      );
+    }
     return;
   }
 

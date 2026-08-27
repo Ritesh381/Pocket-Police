@@ -21,6 +21,34 @@ function norm(s = '') {
   return String(s).trim().toLowerCase();
 }
 
+function editDistance(a, b) {
+  // Levenshtein, iterative single-row. Names are short, so this is cheap.
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(
+        prev[j] + 1,
+        row[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+// Last-resort match for a name the model mistyped ("Shubram" for "Shubham").
+// Without this a typo silently creates a duplicate contact and splits someone's
+// balance across two rows. Only fires on an unambiguous single near-miss.
+export function closestName(want, names) {
+  const w = norm(want);
+  if (w.length < 4) return null;
+  const tolerance = w.length <= 6 ? 1 : 2;
+  const hits = names.filter((n) => editDistance(w, norm(n)) <= tolerance);
+  return hits.length === 1 ? hits[0] : null;
+}
+
 // Attaches a resolution to each extracted entry:
 //   { ...entry, personId, matchedName, isNew, ambiguous }
 // Matching is exact (case-insensitive) → substring. Unknown names are flagged
@@ -38,6 +66,11 @@ export function resolveEntries(entries, people) {
     }
     if (partial.length > 1) {
       return { ...e, personId: null, matchedName: e.person, isNew: false, ambiguous: true };
+    }
+    const near = closestName(e.person, people.map((p) => p.name));
+    if (near) {
+      const p = people.find((x) => x.name === near);
+      return { ...e, personId: p.id, matchedName: p.name, isNew: false, ambiguous: false };
     }
     return { ...e, personId: null, matchedName: e.person, isNew: true, ambiguous: false };
   });
