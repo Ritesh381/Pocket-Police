@@ -16,7 +16,7 @@ import { formatMoney } from '../../lib/format';
 import { useTheme, radius } from '../../lib/theme';
 
 export default function DebtsDashboard() {
-  const router = Router();
+  const router = useRouter();
   const { colors } = useTheme();
   const s = makeStyles(colors);
   const [query, setQuery] = useState('');
@@ -79,12 +79,12 @@ export default function DebtsDashboard() {
               </View>
               <View style={s.miniStats}>
                 <View style={s.statBox}>
-                  <Text style={s.statValue}>{formatMoney(data?.month_lent || 0, currency)}</Text>
+                  <Text style={s.statValue}>{formatMoney(data?.lent_this_month || 0, currency)}</Text>
                   <Text style={s.statLabel}>Lent this month</Text>
                 </View>
                 <View style={s.statDivider} />
                 <View style={s.statBox}>
-                  <Text style={s.statValue}>{formatMoney(data?.month_collected || 0, currency)}</Text>
+                  <Text style={s.statValue}>{formatMoney(data?.collected_this_month || 0, currency)}</Text>
                   <Text style={s.statLabel}>Collected</Text>
                 </View>
               </View>
@@ -240,7 +240,7 @@ function makeStyles(colors) {
       height: 42,
       borderRadius: 21,
       backgroundColor: colors.primary + '22',
-      justify: 'center',
+      justifyContent: 'center',
       alignItems: 'center',
       marginRight: 12,
     },

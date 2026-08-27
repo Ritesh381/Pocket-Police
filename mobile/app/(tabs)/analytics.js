@@ -245,7 +245,7 @@ function makeStyles(colors) {
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.bg },
     monthBar: {
       flexDirection: 'row',
-      justify: 'space-between',
+      justifyContent: 'space-between',
       alignItems: 'center',
       backgroundColor: colors.card,
       borderRadius: radius.md,
